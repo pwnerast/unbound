@@ -46,7 +46,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # ---- Build a LOCAL test image (runner arch) and load it ----
+      # 1) Build a LOCAL test image for this runner and load it
       - name: Build (local test image)
         uses: docker/build-push-action@v6
         with:
@@ -60,20 +60,32 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # ---- Smoke test: start unbound and verify DNS works ----
+      # 2) Smoke test: start Unbound, wait until it answers, print logs if not
       - name: Smoke test container
         shell: bash
         run: |
           set -euo pipefail
           docker rm -f unboundtest >/dev/null 2>&1 || true
-          docker run -d --name unboundtest unbound:test
+          docker run -d --name unboundtest -p 55335:5335/tcp -p 55335:5335/udp unbound:test
 
-          echo "===> Container logs (initial)"
+          echo "===> ps/inspect after start"
+          docker ps -a || true
+          docker inspect --format 'State={{json .State}}' unboundtest || true
+
+          echo "===> Initial logs"
           sleep 2
           docker logs unboundtest || true
 
           echo "===> Wait up to 90s for DNS to respond"
           for i in {1..45}; do
+            # Check container still running
+            if ! docker inspect --format '{{.State.Running}}' unboundtest 2>/dev/null | grep -q true; then
+              echo "Container exited early; logs:"
+              docker logs unboundtest || true
+              docker inspect unboundtest --format 'ExitCode={{.State.ExitCode}} Error={{.State.Error}}' || true
+              exit 1
+            fi
+            # Probe DNS from inside the container (uses installed dig)
             if docker exec unboundtest sh -lc 'dig @127.0.0.1 -p 5335 cloudflare.com A +timeout=2 +tries=1 +short' | grep -Eq '^[0-9]+\.'; then
               echo "DNS OK"
               break
@@ -81,9 +93,9 @@ jobs:
             sleep 2
             if [ "$i" -eq 45 ]; then
               echo "Unbound did not answer in time"
-              echo "===> Final container logs"
+              echo "===> Final logs"
               docker logs unboundtest || true
-              echo "===> Print config for debugging"
+              echo "===> Config"
               docker exec unboundtest sh -lc 'unbound -V || true; echo; cat /etc/unbound/unbound.conf || true'
               exit 1
             fi
@@ -91,7 +103,7 @@ jobs:
 
           docker rm -f unboundtest
 
-      # ---- Multi-arch build & push (only if smoke test passed) ----
+      # 3) If smoke test passed, push multi-arch
       - name: Build & Push (multi-arch)
         uses: docker/build-push-action@v6
         with:
