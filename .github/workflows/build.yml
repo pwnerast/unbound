@@ -20,10 +20,18 @@ jobs:
     concurrency:
       group: build-${{ github.ref }}
       cancel-in-progress: false
+    env:
+      DOCKER_BUILDKIT: "1"
+      BUILDKIT_PROGRESS: "plain"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Docker info (debug)
+        run: |
+          docker version
+          docker info
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -38,7 +46,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 1) Build a LOCAL test image for the runner arch and load it
+      # ---- Build a LOCAL test image (runner arch) and load it ----
       - name: Build (local test image)
         uses: docker/build-push-action@v6
         with:
@@ -52,7 +60,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # 2) Smoke test: run Unbound and verify DNS works
+      # ---- Smoke test: start unbound and verify DNS works ----
       - name: Smoke test container
         shell: bash
         run: |
@@ -60,23 +68,30 @@ jobs:
           docker rm -f unboundtest >/dev/null 2>&1 || true
           docker run -d --name unboundtest unbound:test
 
-          # Wait up to ~60s for readiness by probing with dig inside the container
-          for i in {1..30}; do
+          echo "===> Container logs (initial)"
+          sleep 2
+          docker logs unboundtest || true
+
+          echo "===> Wait up to 90s for DNS to respond"
+          for i in {1..45}; do
             if docker exec unboundtest sh -lc 'dig @127.0.0.1 -p 5335 cloudflare.com A +timeout=2 +tries=1 +short' | grep -Eq '^[0-9]+\.'; then
               echo "DNS OK"
               break
             fi
             sleep 2
-            if [ "$i" -eq 30 ]; then
+            if [ "$i" -eq 45 ]; then
               echo "Unbound did not answer in time"
+              echo "===> Final container logs"
               docker logs unboundtest || true
+              echo "===> Print config for debugging"
+              docker exec unboundtest sh -lc 'unbound -V || true; echo; cat /etc/unbound/unbound.conf || true'
               exit 1
             fi
           done
 
           docker rm -f unboundtest
 
-      # 3) Multi-arch build & push (only runs if smoke test passed)
+      # ---- Multi-arch build & push (only if smoke test passed) ----
       - name: Build & Push (multi-arch)
         uses: docker/build-push-action@v6
         with:
@@ -91,3 +106,9 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/unbound:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Show pushed tags (debug)
+        if: always()
+        run: |
+          echo "Pushed: ghcr.io/${{ github.repository_owner }}/unbound:latest"
+          echo "Pushed: ghcr.io/${{ github.repository_owner }}/unbound:${{ github.sha }}"
