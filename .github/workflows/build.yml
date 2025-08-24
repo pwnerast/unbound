@@ -23,7 +23,7 @@ jobs:
 
     steps:
       - name: Checkout
-      - uses: actions/checkout@v4
+        uses: actions/checkout@v4
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -38,7 +38,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 1) Build a LOCAL test image for the runner arch and load it into the Docker daemon
+      # 1) Build a LOCAL test image for the runner arch and load it
       - name: Build (local test image)
         uses: docker/build-push-action@v6
         with:
@@ -52,7 +52,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # 2) Smoke test: start unbound and verify we can resolve something
+      # 2) Smoke test: run Unbound and verify DNS works
       - name: Smoke test container
         shell: bash
         run: |
@@ -68,13 +68,15 @@ jobs:
             fi
             sleep 2
             if [ "$i" -eq 30 ]; then
-              echo "Unbound did not answer in time"; docker logs unboundtest || true; exit 1
+              echo "Unbound did not answer in time"
+              docker logs unboundtest || true
+              exit 1
             fi
           done
 
           docker rm -f unboundtest
 
-      # 3) If the smoke test passed, do the real multi-arch build & push
+      # 3) Multi-arch build & push (only runs if smoke test passed)
       - name: Build & Push (multi-arch)
         uses: docker/build-push-action@v6
         with:
