@@ -1,20 +1,19 @@
-# You can pin the base OS here. Change to debian:trixie-slim or debian:stable-slim if you prefer.
+# Pin here for predictability; move to debian:trixie-slim or stable-slim when ready
 ARG BASE=debian:stable-slim
 FROM ${BASE}
 
-# Install Unbound + dig, keep image slim
+# Install Unbound + dig + packaged root hints (avoids flaky curl-at-build)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      unbound dnsutils ca-certificates curl \
+      unbound dnsutils dns-root-data ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-# Fetch current root hints so the default config can resolve recursively
-RUN mkdir -p /etc/unbound /var/lib/unbound \
- && curl -fsSL https://www.internic.net/domain/named.root -o /etc/unbound/root.hints \
- # Initialize DNSSEC trust anchor (ignore non-fatal exit codes)
+# Initialize DNSSEC trust anchor (ignore non-fatal exit codes)
+RUN mkdir -p /var/lib/unbound \
  && unbound-anchor -a /var/lib/unbound/root.key || true
 
-# Provide a sane default recursive config. Your compose can override it by mounting your own.
+# Default recursive config. Compose can mount your own to /etc/unbound/unbound.conf
+# Note: use the packaged root hints path from dns-root-data
 RUN printf '%s\n' \
   'server:' \
   '  interface: 0.0.0.0@5335' \
@@ -28,7 +27,7 @@ RUN printf '%s\n' \
   '  qname-minimisation: yes' \
   '  hide-identity: yes' \
   '  hide-version: yes' \
-  '  root-hints: "/etc/unbound/root.hints"' \
+  '  root-hints: "/usr/share/dns/root.hints"' \
   '  auto-trust-anchor-file: "/var/lib/unbound/root.key"' \
   > /etc/unbound/unbound.conf
 
