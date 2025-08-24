@@ -46,7 +46,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 1) Build a LOCAL test image for this runner and load it
+      # ---- Build a LOCAL test image (runner arch) and load it ----
       - name: Build (local test image)
         uses: docker/build-push-action@v6
         with:
@@ -60,7 +60,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # 2) Smoke test: start Unbound, wait until it answers, print logs if not
+      # ---- Smoke test: start unbound and verify DNS works ----
       - name: Smoke test container
         shell: bash
         run: |
@@ -78,14 +78,12 @@ jobs:
 
           echo "===> Wait up to 90s for DNS to respond"
           for i in {1..45}; do
-            # Check container still running
             if ! docker inspect --format '{{.State.Running}}' unboundtest 2>/dev/null | grep -q true; then
               echo "Container exited early; logs:"
               docker logs unboundtest || true
               docker inspect unboundtest --format 'ExitCode={{.State.ExitCode}} Error={{.State.Error}}' || true
               exit 1
             fi
-            # Probe DNS from inside the container (uses installed dig)
             if docker exec unboundtest sh -lc 'dig @127.0.0.1 -p 5335 cloudflare.com A +timeout=2 +tries=1 +short' | grep -Eq '^[0-9]+\.'; then
               echo "DNS OK"
               break
@@ -103,7 +101,7 @@ jobs:
 
           docker rm -f unboundtest
 
-      # 3) If smoke test passed, push multi-arch
+      # ---- Multi-arch build & push (only if smoke test passed) ----
       - name: Build & Push (multi-arch)
         uses: docker/build-push-action@v6
         with:
